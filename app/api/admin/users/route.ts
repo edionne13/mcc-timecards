@@ -10,13 +10,13 @@ export async function POST(request:Request){
  const db=createServiceClient();
  const{data:{user}}=await db.auth.getUser(token);
  if(!user)return NextResponse.json({error:"Unauthorized"},{status:401});
- const{data:caller}=await db.from("profiles").select("role,organization_id,active").eq("id",user.id).single();
- if(caller?.role!=="admin")return NextResponse.json({error:"Administrator access required"},{status:403});
- const body=await request.json();
+ const{data:caller}=await db.from("profiles").select("role,organization_id,active,must_change_password").eq("id",user.id).single();
+ if(caller?.role!=="admin"||!caller.active||caller.must_change_password)return NextResponse.json({error:"Administrator access required"},{status:403});
+ const body=await request.json() as {email?:unknown;displayName?:unknown;role?:unknown};
  const email=typeof body.email==="string"?body.email.trim().toLowerCase():"";
  const displayName=typeof body.displayName==="string"?body.displayName.trim():"";
  const role=body.role;
- if(!email||!displayName||!["employee","supervisor"].includes(role))return NextResponse.json({error:"Valid name, email, and role are required"},{status:400});
+ if(!email||!displayName||(role!=="employee"&&role!=="supervisor"))return NextResponse.json({error:"Valid name, email, and role are required"},{status:400});
  const temporaryPassword=`Mcc!${randomBytes(9).toString("base64url")}9a`;
  const created=await db.auth.admin.createUser({email,password:temporaryPassword,email_confirm:true,user_metadata:{display_name:displayName}});
  if(created.error)return NextResponse.json({error:created.error.message},{status:400});
@@ -31,8 +31,8 @@ export async function POST(request:Request){
   await db.from("supervisor_assignments").upsert({organization_id:caller.organization_id,employee_id:created.data.user.id,supervisor_id:ted.id,active:true},{onConflict:"employee_id,supervisor_id"});
  }
  if(role==="supervisor"&&email.toLowerCase()===PRIMARY_SUPERVISOR_EMAIL){
-  const{data:employees}=await db.from("profiles").select("id").eq("organization_id",caller.organization_id).eq("role","employee");
+  const{data:employees}=await db.from("profiles").select("id").eq("organization_id",caller.organization_id).in("role",["employee","admin"]).eq("active",true);
   if(employees?.length)await db.from("supervisor_assignments").upsert(employees.map((employee)=>({organization_id:caller.organization_id,employee_id:employee.id,supervisor_id:created.data.user.id,active:true})),{onConflict:"employee_id,supervisor_id"});
  }
- return NextResponse.json({temporaryPassword});
+ return NextResponse.json({temporaryPassword},{headers:{"Cache-Control":"no-store"}});
 }

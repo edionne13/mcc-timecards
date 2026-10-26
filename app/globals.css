@@ -917,3 +917,6 @@ textarea:focus {
     margin: 14px 14px -10px;
   }
 }
+
+/* Keep anticipated-time confirmation readable inside the entry form. */
+.form-grid input[type="checkbox"] { width: auto; min-height: auto; margin-right: 0.5rem; }

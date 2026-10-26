@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
+import { submissionDeadline, pacificDateTime } from "@/lib/payroll";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 type Role = "employee" | "supervisor" | "admin";
@@ -35,6 +36,7 @@ type Shift = {
   source: "clock" | "manual";
   correction_reason: string | null;
   corrected: boolean;
+  anticipated: boolean;
 };
 type SB = SupabaseClient;
 const ZONE = "America/Los_Angeles",
@@ -80,35 +82,6 @@ const ZONE = "America/Los_Angeles",
     s === "returned" ? "Needs correction" : s[0].toUpperCase() + s.slice(1),
   statusClass = (s: string) => `status status-${s}`,
   csvCell = (v: string | number) => `"${String(v).replaceAll('"', '""')}"`,
-  pacificParts = (value = new Date()) => {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: ZONE,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-      hourCycle: "h23",
-    }).formatToParts(value);
-    return Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  },
-  submissionDeadline = (month: string, value = new Date()) => {
-    const [year, monthNumber] = month.slice(0, 7).split("-").map(Number),
-      lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate(),
-      deadlineDate = `${year}-${String(monthNumber).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-      now = pacificParts(value),
-      nowDate = `${now.year}-${now.month}-${now.day}`,
-      nowMinutes = Number(now.hour) * 60 + Number(now.minute),
-      open = nowDate >= deadlineDate,
-      late = nowDate > deadlineDate || (nowDate === deadlineDate && nowMinutes >= 12 * 60);
-    return {
-      open,
-      late,
-      opensLabel: `${new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(year, monthNumber - 1, 1)))} ${lastDay}`,
-      label: `${new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(year, monthNumber - 1, 1)))} ${lastDay} at 12:00 PM Pacific Time`,
-    };
-  },
   submittedLate = (card: Card) => card.submitted_at ? submissionDeadline(card.month, new Date(card.submitted_at)).late : false;
 
 export default function StaffApp() {
@@ -337,7 +310,7 @@ function Login({ sb }: { sb: SB }) {
           </p>
         ) : null}
         <small className="security-note">
-          Accounts are created by the MCC payroll administrator.
+          First time signing in? Rachel creates your account or resets your temporary password in Staff management. Sign in with your work email and temporary password, then choose your own password.
         </small>
       </form>
     </div>
@@ -467,9 +440,10 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
     end: string;
     breaks: number;
     reason: string;
+    anticipated: boolean;
   }) {
-    const startedAt = new Date(v.start);
-    const endedAt = v.end ? new Date(v.end) : null;
+    const startedAt = pacificDateTime(v.start);
+    const endedAt = v.end ? pacificDateTime(v.end) : null;
     if (Number.isNaN(startedAt.getTime())) {
       setErrorMsg("Enter a valid clock-in time.");
       return;
@@ -485,7 +459,13 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
       return;
     }
     if (startedAt.getTime() > Date.now() + 5 * 60000 || (endedAt && endedAt.getTime() > Date.now() + 5 * 60000)) {
-      setErrorMsg("Future time cannot be recorded as hours already worked.");
+      if (!v.anticipated) {
+        setErrorMsg("Mark future hours as anticipated before saving.");
+        return;
+      }
+    }
+    if (v.anticipated && !endedAt) {
+      setErrorMsg("Anticipated hours need both a start and end time.");
       return;
     }
     if (!Number.isInteger(v.breaks)) {
@@ -542,6 +522,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
       started_at: startedAt.toISOString(),
       ended_at: endedAt?.toISOString() ?? null,
       break_minutes: v.breaks,
+      anticipated: v.anticipated,
       source: "manual",
       correction_reason: v.reason,
     };
@@ -559,7 +540,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
     setMsg(
       editing
         ? "Correction saved in the audit history."
-        : "Missed shift added to the audit history.",
+        : "Time entry added to the audit history.",
     );
     setEditing(null);
     setManual(false);
@@ -661,7 +642,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
           <b>{!deadline.open ? "Submission locked" : deadline.late ? "Submission overdue" : "Submission deadline"}</b>
           <span>
             {!deadline.open
-              ? `Submission opens on ${deadline.opensLabel}. Continue recording and correcting time until then.`
+              ? `Submission opens on ${deadline.opensLabel}. You can enter anticipated hours for remaining scheduled work.`
               : `Due by ${deadline.label}. ${deadline.late ? "Submit as soon as possible; late submissions remain available so all worked time can still be reported." : "The timecard locks after signing and submission."}`}
           </span>
         </div>
@@ -756,7 +737,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
             ? setErrorMsg("This timecard is locked because it has already been submitted or approved.")
             : setManual(true)
         }>
-          + Add missed shift
+          + Add time / anticipated hours
         </button>
         <button
           className="primary"
@@ -912,7 +893,9 @@ function ShiftList({
                     <small className="block-muted">{hours(duration(s))}</small>
                   </td>
                   <td>
-                    {s.corrected || s.source === "manual" ? (
+                    {s.anticipated ? (
+                      <span className="status status-returned">Anticipated</span>
+                    ) : s.corrected || s.source === "manual" ? (
                       <span className="status status-returned">Corrected</span>
                     ) : (
                       <span className="status status-approved">Recorded</span>
@@ -984,6 +967,7 @@ function Calendar({
           >
             <b>{d}</b>
             <small>{map.has(d) ? hoursAndMinutes(map.get(d)!) : "—"}</small>
+            {shiftsByDay.get(d)?.some((s) => s.anticipated) ? <small>Anticipated</small> : null}
           </button>
         ))}
       </div>
@@ -1003,6 +987,7 @@ function ShiftModal({
     end: string;
     breaks: number;
     reason: string;
+    anticipated: boolean;
   }) => void;
   onDelete: (shift: Shift, reason: string) => void;
 }) {
@@ -1026,8 +1011,9 @@ function ShiftModal({
     ),
     [breaks, setBreaks] = useState(shift?.break_minutes ?? 0),
     [reason, setReason] = useState(shift?.correction_reason ?? ""),
-    startValue = new Date(start),
-    endValue = end ? new Date(end) : null,
+    [anticipated, setAnticipated] = useState(shift?.anticipated ?? false),
+    startValue = pacificDateTime(start),
+    endValue = end ? pacificDateTime(end) : null,
     elapsed =
       endValue &&
       !Number.isNaN(startValue.getTime()) &&
@@ -1044,13 +1030,13 @@ function ShiftModal({
         className="modal"
         onSubmit={(e) => {
           e.preventDefault();
-          onSave({ start, end, breaks, reason });
+          onSave({ start, end, breaks, reason, anticipated });
         }}
       >
         <div className="panel-head">
           <div>
             <p className="eyebrow">AUDITED CHANGE</p>
-            <h3>{shift ? "Edit clock-in / clock-out" : "Add missed shift"}</h3>
+            <h3>{shift ? "Edit clock-in / clock-out" : "Add time entry"}</h3>
           </div>
           <button type="button" className="icon-btn" onClick={onClose}>
             ×
@@ -1093,7 +1079,11 @@ function ShiftModal({
             </small>
           </label>
           <label className="wide">
-            Reason for correction
+            <span><input type="checkbox" checked={anticipated} onChange={(e) => setAnticipated(e.target.checked)} /> Anticipated hours (scheduled work not yet completed)</span>
+            <small>Use this for future work, including Saturday. Report any difference after the work is completed; submitted timecards must be returned for correction or amended after approval.</small>
+          </label>
+          <label className="wide">
+            Reason / notes
             <textarea
               required
               minLength={3}
@@ -1124,7 +1114,7 @@ function ShiftModal({
           <button type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary">Save corrected time</button>
+          <button className="primary">Save time entry</button>
         </div>
       </form>
     </div>
@@ -1172,9 +1162,10 @@ function SubmitModal({
         <p className={deadline.late ? "form-error" : "security-note"}>
           {deadline.late ? `This timecard is past the ${deadline.label} deadline and will be marked late.` : `Submission deadline: ${deadline.label}.`}
         </p>
+        {shifts.some((s) => s.anticipated) ? <div className="notice warning"><b>Includes anticipated hours</b><span>{hoursAndMinutes(shifts.filter((s) => s.anticipated).reduce((sum, s) => sum + duration(s), 0))} are scheduled rather than completed work. Report differences promptly to Rachel or your supervisor.</span></div> : null}
         <div className="certification">
           <b>Employee Certification</b>
-          <p>I certify that the hours shown on this timecard are a true and accurate record of all hours I worked during this pay period. I have reviewed the time recorded, including meal periods and rest periods, and have reported any corrections or concerns to my supervisor. By selecting <b>Sign &amp; Submit</b>, I intend to electronically sign this timecard and certify that the information provided is accurate to the best of my knowledge.</p>
+          <p>I certify that this timecard accurately records my hours worked and separately identifies hours I anticipate working for the remainder of this month. I have reviewed the recorded time and breaks. I will promptly report any difference between anticipated and actual hours to my supervisor so the timecard can be corrected or amended. By selecting <b>Sign &amp; Submit</b>, I intend to electronically sign this timecard and certify that the information provided is accurate to the best of my knowledge.</p>
         </div>
         <label>
           Type your full name as your signature
@@ -1409,6 +1400,7 @@ function Admin({ sb, p }: { sb: SB; p: Profile }) {
         "Employee",
         "Pay period",
         "Total hours",
+        "Anticipated hours",
         "Status",
         "Submitted",
         "Approved",
@@ -1417,6 +1409,7 @@ function Admin({ sb, p }: { sb: SB; p: Profile }) {
         c.profiles?.display_name || "",
         c.month,
         (totals.get(c.id) || 0) / 60,
+        shifts.filter((s) => s.timecard_id === c.id && s.anticipated).reduce((sum, s) => sum + duration(s), 0) / 60,
         statusText(c.status),
         c.submitted_at || "",
         c.approved_at || "",
@@ -1604,6 +1597,7 @@ function StaffManagement({
     [role, setRole] = useState<Role>("employee"),
     [created, setCreated] = useState(""),
     [temporaryPassword, setTemporaryPassword] = useState(""),
+    [loginEmail, setLoginEmail] = useState(""),
     [busy, setBusy] = useState(false),
     [assignments, setAssignments] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -1641,6 +1635,7 @@ function StaffManagement({
       const data = (await r.json()) as { temporaryPassword?: string; error?: string };
       if (!r.ok || !data.temporaryPassword)
         throw new Error(data.error || "Could not create account");
+      setLoginEmail(email.trim());
       setCreated(`Account created for ${name}.`);
       setTemporaryPassword(data.temporaryPassword);
       setEmail("");
@@ -1651,6 +1646,28 @@ function StaffManagement({
     } finally {
       setBusy(false);
     }
+  }
+  async function resetLogin(account: Profile) {
+    setBusy(true);
+    setCreated("");
+    setTemporaryPassword("");
+    try {
+      const session = (await sb.auth.getSession()).data.session;
+      if (!session) throw new Error("Your session expired. Please sign in again.");
+      const response = await fetch("/api/admin/users/reset-login", {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: "Bearer " + session.access_token},
+        body: JSON.stringify({userId: account.id}),
+      });
+      const data = await response.json() as {error?:string;email:string;temporaryPassword:string};
+      if (!response.ok) throw new Error(data.error || "Could not reset login.");
+      setLoginEmail(data.email);
+      setCreated("Login ready for " + account.display_name + ".");
+      setTemporaryPassword(data.temporaryPassword);
+      await reload();
+    } catch (error) {
+      setCreated(error instanceof Error ? error.message : "Could not reset login.");
+    } finally {setBusy(false);}
   }
   async function assign(employeeId: string, supervisorId: string) {
     if (!supervisorId) return;
@@ -1678,7 +1695,7 @@ function StaffManagement({
     if (!error)
       setAssignments((current) => ({ ...current, [employeeId]: supervisorId }));
   }
-  const supervisors = staff.filter((x) => x.role === "supervisor");
+  const supervisors = staff.filter((x) => x.active && x.role === "supervisor");
   return (
     <>
       <div className="page-title">
@@ -1742,9 +1759,10 @@ function StaffManagement({
               </span>
               <span>
                 <b>{x.display_name}</b>
-                <small>{x.role}</small>
+                <small>{x.role}{x.must_change_password ? " · Password setup required" : ""}</small>
               </span>
-              {x.role === "employee" ? (
+              {x.active && x.role !== "admin" ? <button disabled={busy} onClick={() => resetLogin(x)}>Set up / reset login</button> : null}
+              {x.role === "employee" || x.role === "admin" ? (
                 <select
                   aria-label={`Supervisor for ${x.display_name}`}
                   value={assignments[x.id] ?? ""}
@@ -1769,7 +1787,8 @@ function StaffManagement({
           <div className="modal account-created" role="dialog" aria-modal="true" aria-labelledby="account-created-title">
             <p className="eyebrow">ACCOUNT READY</p>
             <h3 id="account-created-title">{created}</h3>
-            <p>Give the staff member their work email and this one-time temporary password:</p>
+            <p>Give the staff member this login email and temporary password. Resetting a login replaces the previous password:</p>
+            <p><b>Website:</b> https://mcc-timecards.vercel.app<br /><b>Work email:</b> {loginEmail}</p>
             <div className="temporary-password">
               <code>{temporaryPassword}</code>
               <button onClick={() => navigator.clipboard.writeText(temporaryPassword)}>Copy password</button>
@@ -1792,7 +1811,7 @@ function Settings({ sb }: { sb: SB; p: Profile }) {
       fetch("/api/integrations/outlook/status", {
         headers: { authorization: `Bearer ${data.session?.access_token}` },
       })
-        .then((response) => response.ok ? response.json() : null)
+        .then(async (response) => response.ok ? await response.json() as {configured:boolean;connected:boolean;email:string|null} : null)
         .then(setOutlook)
         .catch(() => setOutlook(null)),
     );
@@ -1822,7 +1841,7 @@ function Settings({ sb }: { sb: SB; p: Profile }) {
       </div>
       <div className="notice compact">
         <b>Submission deadline</b>
-        <span>12:00 PM Pacific Time on the final calendar day of every month. Late submissions remain available and are flagged for Ted.</span>
+        <span>Submission opens on the 27th of each month. Due by 12:00 PM Pacific Time on the final calendar day. Late submissions remain available and are flagged for Ted.</span>
       </div>
       <div className="notice compact">
         <b>Supervisor email notifications</b>
