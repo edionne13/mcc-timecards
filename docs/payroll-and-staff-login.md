@@ -6,7 +6,7 @@ Rachel can add Saturday or other future scheduled work with Add time / anticipat
 
 In Payroll administration > Staff management, Rachel can create Ted as a Supervisor using tyuen@maccov.org if no account exists. For an existing account, Set up / reset login shows his email and a new temporary password once. This replaces the previous password and requires Ted to choose his own password on sign-in. The endpoint permits active administrators with completed password setup to reset only active employee/supervisor accounts in their own organization. Passwords are never stored in the audit log.
 
-Use the supervisor selector beside Rachel's administrator account to assign Ted to her own timecard, as well as assigning employees. Ted uses My timecard for his own hours and Supervisor review for assigned submissions.
+Use the supervisor selector beside Rachel's administrator account to assign Ted to her own timecard, as well as assigning employees. Ted's account (tyuen@maccov.org) opens directly in Supervisor review for assigned submissions. He has no personal timecard or clock-in controls. Rachel's administrator account retains My timecard.
 
 ## Release order
 
