@@ -136,6 +136,8 @@ export default function StaffApp() {
     <Shell p={profile} signOut={() => sb.auth.signOut()}>
       {profile.role === "employee" ? (
         <Employee sb={sb} p={profile} />
+      ) : profile.role === "supervisor" && user.email?.toLowerCase() === "tyuen@maccov.org" ? (
+        <Supervisor sb={sb} p={profile} />
       ) : (
         <RolePortal sb={sb} p={profile} />
       )}
