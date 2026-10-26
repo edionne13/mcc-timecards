@@ -1841,7 +1841,7 @@ function Settings({ sb }: { sb: SB; p: Profile }) {
       </div>
       <div className="notice compact">
         <b>Submission deadline</b>
-        <span>Submission opens on the 27th of each month. Due by 12:00 PM Pacific Time on the final calendar day. Late submissions remain available and are flagged for Ted.</span>
+        <span>Submission opens on the 26th of each month. Due by 12:00 PM Pacific Time on the final calendar day. Late submissions remain available and are flagged for Ted.</span>
       </div>
       <div className="notice compact">
         <b>Supervisor email notifications</b>

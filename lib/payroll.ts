@@ -13,9 +13,9 @@ export function submissionDeadline(month: string, value = new Date()) {
     .format(new Date(Date.UTC(year, monthNumber - 1, 1)));
   const lastDate = prefix + "-" + String(lastDay).padStart(2, "0");
   return {
-    open: today >= prefix + "-27",
+    open: today >= prefix + "-26",
     late: today > lastDate || (today === lastDate && Number(now.hour) * 60 + Number(now.minute) >= 720),
-    opensLabel: monthName + " 27",
+    opensLabel: monthName + " 26",
     label: monthName + " " + lastDay + " at 12:00 PM Pacific Time",
   };
 }

@@ -1,4 +1,4 @@
--- Open submission on the 27th and preserve anticipated time as a distinct record.
+-- Open submission on the 26th and preserve anticipated time as a distinct record.
 begin;
 alter table public.work_shifts add column if not exists anticipated boolean not null default false;
 
@@ -53,7 +53,7 @@ set search_path=public
 as $$
 declare
   v_today date := (now() at time zone 'America/Los_Angeles')::date;
-  v_opens date := (date_trunc('month', new.month) + interval '26 days')::date;
+  v_opens date := (date_trunc('month', new.month) + interval '25 days')::date;
 begin
   if new.status = 'submitted'
      and old.status is distinct from new.status
@@ -110,7 +110,7 @@ begin
   if lower(trim(coalesce(p_signature,'')))<>lower(trim(v_profile.display_name)) then
     raise exception 'Type your full name exactly to sign this timecard';
   end if;
-  v_opens := (date_trunc('month',v_card.month)+interval '26 days')::date;
+  v_opens := (date_trunc('month',v_card.month)+interval '25 days')::date;
   if v_today<v_opens then
     raise exception 'Timecard submission opens on %',to_char(v_opens,'FMMonth FMDD');
   end if;

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {submissionDeadline, pacificDateTime} from '../lib/payroll.ts';
-test('submission opens at midnight Pacific on the 27th', () => {
- assert.equal(submissionDeadline('2026-10-01',new Date('2026-10-27T06:59:59Z')).open,false);
- assert.equal(submissionDeadline('2026-10-01',new Date('2026-10-27T07:00:00Z')).open,true);
+test('submission opens at midnight Pacific on the 26th', () => {
+ assert.equal(submissionDeadline('2026-10-01',new Date('2026-10-26T06:59:59Z')).open,false);
+ assert.equal(submissionDeadline('2026-10-01',new Date('2026-10-26T07:00:00Z')).open,true);
  assert.equal(submissionDeadline('2026-10-01',new Date('2026-10-30T12:00:00Z')).open,true);
 });
 test('late submissions stay open and future months remain closed', () => {
@@ -12,8 +12,8 @@ test('late submissions stay open and future months remain closed', () => {
  assert.equal(submissionDeadline('2026-10-01',now).late,true);
  assert.equal(submissionDeadline('2026-11-01',now).open,false);
 });
-test('February and leap months open on the 27th', () => {
- assert.equal(submissionDeadline('2027-02-01',new Date('2027-02-27T08:00:00Z')).open,true);
+test('February and leap months open on the 26th', () => {
+ assert.equal(submissionDeadline('2027-02-01',new Date('2027-02-26T08:00:00Z')).open,true);
  assert.match(submissionDeadline('2028-02-01',new Date()).label,/February 29/);
 });
 test('noon Pacific deadline preserves existing late flag', () => {
