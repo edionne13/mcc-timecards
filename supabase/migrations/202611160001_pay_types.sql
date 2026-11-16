@@ -1,4 +1,4 @@
--- Open submission on the 26th and preserve anticipated time as a distinct record.
+-- Add pay categories while preserving monthly submission and audit protections.
 begin;
 alter table public.work_shifts add column if not exists pay_type text not null default 'regular'
   check (pay_type in ('regular','vacation','holiday','sick'));
@@ -152,11 +152,11 @@ $$;
 
 
 create or replace function public.prevent_shift_overlap() returns trigger
-language plpgsql set search_path=public as $
+language plpgsql set search_path=public as $$
 begin
   perform pg_advisory_xact_lock(hashtext(new.employee_id::text));
   if new.pay_type='regular' then
-    if exists(select 1 from work_shifts s where s.employee_id=new.employee_id and s.id<>new.id and s.pay_type='regular'
+    if exists(select 1 from work_shifts s where s.employee_id=new.employee_id and s.timecard_id=new.timecard_id and s.id<>new.id and s.pay_type='regular'
       and tstzrange(s.started_at,coalesce(s.ended_at,'infinity')) && tstzrange(new.started_at,coalesce(new.ended_at,'infinity'))) then
       raise exception 'This shift overlaps an existing shift';
     end if;
@@ -170,6 +170,6 @@ begin
     end if;
   end if;
   return new;
-end $;
+end $$;
 
 commit;
