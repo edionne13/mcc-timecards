@@ -4,6 +4,7 @@ import Image from "next/image";
 import { submissionDeadline, pacificDateTime } from "@/lib/payroll";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { PAY_TYPES, PAY_LABELS, payType, type PayType } from "@/lib/pay-types";
 type Role = "employee" | "supervisor" | "admin";
 type Profile = {
   id: string;
@@ -27,6 +28,7 @@ type Card = {
   profiles?: { display_name: string } | null;
 };
 type Shift = {
+  pay_type?: PayType;
   id: string;
   employee_id: string;
   timecard_id: string;
@@ -443,6 +445,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
     breaks: number;
     reason: string;
     anticipated: boolean;
+    payType: PayType;
   }) {
     const startedAt = pacificDateTime(v.start);
     const endedAt = v.end ? pacificDateTime(v.end) : null;
@@ -454,13 +457,13 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
       setErrorMsg("Clock-out must be later than clock-in.");
       return;
     }
-    if (monthKey(startedAt) !== selectedMonth || (endedAt && monthKey(endedAt) !== selectedMonth)) {
+    if (monthKey(startedAt) !== selectedMonth || (v.payType === "regular" && endedAt && monthKey(endedAt) !== selectedMonth)) {
       setErrorMsg(
         `Both times must be inside ${dateFmt(selectedMonth, { month: "long", year: "numeric" })}. Select the correct month before adding this shift.`,
       );
       return;
     }
-    if (startedAt.getTime() > Date.now() + 5 * 60000 || (endedAt && endedAt.getTime() > Date.now() + 5 * 60000)) {
+    if (v.payType === "regular" && (startedAt.getTime() > Date.now() + 5 * 60000 || (endedAt && endedAt.getTime() > Date.now() + 5 * 60000))) {
       if (!v.anticipated) {
         setErrorMsg("Mark future hours as anticipated before saving.");
         return;
@@ -482,8 +485,10 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
         setErrorMsg("The unpaid break must be shorter than the full shift.");
         return;
       }
+      const duplicateLeave = v.payType !== "regular" && shifts.find((shift) => shift.id !== editing?.id && payType(shift) === v.payType && dateFmt(shift.started_at) === dateFmt(startedAt.toISOString()));
+      if (duplicateLeave) { setErrorMsg("This pay type already has an entry for this date. Edit that entry instead."); return; }
       const conflict = shifts.find((shift) => {
-        if (shift.id === editing?.id) return false;
+        if (shift.id === editing?.id || v.payType !== "regular" || payType(shift) !== "regular") return false;
         const existingStart = new Date(shift.started_at).getTime();
         const existingEnd = shift.ended_at
           ? new Date(shift.ended_at).getTime()
@@ -525,6 +530,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
       ended_at: endedAt?.toISOString() ?? null,
       break_minutes: v.breaks,
       anticipated: v.anticipated,
+      pay_type: v.payType,
       source: "manual",
       correction_reason: v.reason,
     };
@@ -656,7 +662,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
           tone={open ? "green" : ""}
         />
         <Metric label="Today" value={hoursAndMinutes(todayTotal)} />
-        <Metric label="Current period" value={hoursAndMinutes(total)} />
+        <Metric label="Total paid hours" value={hoursAndMinutes(total)} />
         <Metric label="Corrections" value={String(corrections)} />
       </div>
       <div className="punch-card no-print">
@@ -684,6 +690,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
           {open ? "Clock Out" : "Clock In"}
         </button>
       </div>
+      <PaySummary shifts={shifts} />
       <div className="tabs no-print">
         <button
           className={view === "overview" ? "active" : ""}
@@ -739,7 +746,7 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
             ? setErrorMsg("This timecard is locked because it has already been submitted or approved.")
             : setManual(true)
         }>
-          + Add time / anticipated hours
+          + Add hours / paid time off
         </button>
         <button
           className="primary"
@@ -783,6 +790,12 @@ function Employee({ sb, p }: { sb: SB; p: Profile }) {
       ) : null}
     </div>
   );
+}
+function PaySummary({ shifts }: { shifts: Shift[] }) {
+  return <div className="metric-grid pay-summary">
+    {PAY_TYPES.map((type) => <Metric key={type} label={PAY_LABELS[type]}
+      value={hoursAndMinutes(shifts.filter((entry) => payType(entry) === type).reduce((sum, entry) => sum + duration(entry), 0))} />)}
+  </div>;
 }
 function Metric({
   label,
@@ -861,7 +874,7 @@ function ShiftList({
         <Empty
           icon="◷"
           title="No time entries yet"
-          text="Use Clock In when work begins, or add a missed shift."
+          text="Use Clock In for work, or Add hours / paid time off for regular, vacation, holiday, or sick hours."
         />
       ) : (
         <div className="table-wrap">
@@ -869,6 +882,7 @@ function ShiftList({
             <thead>
               <tr>
                 <th>Date</th>
+                <th>Pay type</th>
                 <th>Clock in</th>
                 <th>Clock out</th>
                 <th>Break</th>
@@ -887,9 +901,10 @@ function ShiftList({
                       day: "numeric",
                     })}
                   </td>
-                  <td>{timeFmt(s.started_at)}</td>
-                  <td>{timeFmt(s.ended_at)}</td>
-                  <td>{s.break_minutes} min</td>
+                  <td>{PAY_LABELS[payType(s)]}</td>
+                  <td>{payType(s) === "regular" ? timeFmt(s.started_at) : "—"}</td>
+                  <td>{payType(s) === "regular" ? timeFmt(s.ended_at) : "—"}</td>
+                  <td>{payType(s) === "regular" ? `${s.break_minutes} min` : "—"}</td>
                   <td>
                     <b>{hoursAndMinutes(duration(s))}</b>
                     <small className="block-muted">{hours(duration(s))}</small>
@@ -969,6 +984,7 @@ function Calendar({
           >
             <b>{d}</b>
             <small>{map.has(d) ? hoursAndMinutes(map.get(d)!) : "—"}</small>
+            {shiftsByDay.get(d)?.some((s) => payType(s) !== "regular") ? <small>Paid time off</small> : null}
             {shiftsByDay.get(d)?.some((s) => s.anticipated) ? <small>Anticipated</small> : null}
           </button>
         ))}
@@ -976,7 +992,7 @@ function Calendar({
     </div>
   );
 }
-function ShiftModal({
+export function ShiftModal({
   shift,
   onClose,
   onSave,
@@ -990,6 +1006,7 @@ function ShiftModal({
     breaks: number;
     reason: string;
     anticipated: boolean;
+    payType: PayType;
   }) => void;
   onDelete: (shift: Shift, reason: string) => void;
 }) {
@@ -1014,6 +1031,9 @@ function ShiftModal({
     [breaks, setBreaks] = useState(shift?.break_minutes ?? 0),
     [reason, setReason] = useState(shift?.correction_reason ?? ""),
     [anticipated, setAnticipated] = useState(shift?.anticipated ?? false),
+    [selectedPayType, setSelectedPayType] = useState<PayType>(shift ? payType(shift) : "regular"),
+    [leaveDate, setLeaveDate] = useState(local(shift?.started_at).slice(0, 10)),
+    [leaveHours, setLeaveHours] = useState(shift ? duration(shift) / 60 : 8),
     startValue = pacificDateTime(start),
     endValue = end ? pacificDateTime(end) : null,
     elapsed =
@@ -1032,19 +1052,39 @@ function ShiftModal({
         className="modal"
         onSubmit={(e) => {
           e.preventDefault();
-          onSave({ start, end, breaks, reason, anticipated });
+          if (selectedPayType !== "regular") {
+            if (!Number.isFinite(leaveHours) || leaveHours <= 0 || leaveHours > 24 || Math.abs(leaveHours * 60 - Math.round(leaveHours * 60)) > 0.00001) return;
+            const leaveStart = leaveDate + "T00:00";
+            const leaveEnd = new Date(pacificDateTime(leaveStart).getTime() + Math.round(leaveHours * 60) * 60000);
+            const endLocal = local(leaveEnd.toISOString());
+            onSave({ start: leaveStart, end: endLocal, breaks: 0, reason: reason.trim() || PAY_LABELS[selectedPayType], anticipated: false, payType: selectedPayType });
+          } else {
+            onSave({ start, end, breaks, reason, anticipated, payType: selectedPayType });
+          }
         }}
       >
         <div className="panel-head">
           <div>
             <p className="eyebrow">AUDITED CHANGE</p>
-            <h3>{shift ? "Edit clock-in / clock-out" : "Add time entry"}</h3>
+            <h3>{shift ? "Edit time entry" : "Add hours"}</h3>
           </div>
           <button type="button" className="icon-btn" onClick={onClose}>
             ×
           </button>
         </div>
         <div className="form-grid">
+          <label className="wide">1. Choose pay type
+            <select value={selectedPayType} onChange={(e) => setSelectedPayType(e.target.value as PayType)}>
+              {PAY_TYPES.map((type) => <option key={type} value={type}>{PAY_LABELS[type]}</option>)}
+            </select>
+            <small>Regular = time you worked. Vacation, holiday, and sick = paid time off.</small>
+          </label>
+          {selectedPayType !== "regular" ? <>
+            <label>2. Date<input required type="date" value={leaveDate} onChange={(e) => setLeaveDate(e.target.value)} /></label>
+            <label>3. Paid hours<input required type="number" min="0.25" max="24" step="0.25" value={leaveHours} onChange={(e) => setLeaveHours(Number(e.target.value))} />
+              <small>Example: enter 8 for a full 8-hour day. No clock times or breaks needed.</small>
+            </label>
+          </> : <>
           <label>
             Clock in
             <input
@@ -1084,14 +1124,15 @@ function ShiftModal({
             <span><input type="checkbox" checked={anticipated} onChange={(e) => setAnticipated(e.target.checked)} /> Anticipated hours (scheduled work not yet completed)</span>
             <small>Use this for future work, including Saturday. Report any difference after the work is completed; submitted timecards must be returned for correction or amended after approval.</small>
           </label>
+          </>}
           <label className="wide">
-            Reason / notes
+            {selectedPayType === "regular" || shift ? "Reason / notes" : "Notes (optional)"}
             <textarea
-              required
-              minLength={3}
+              required={selectedPayType === "regular" || Boolean(shift)}
+              minLength={reason ? 3 : undefined}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Explain why this time needs to be changed."
+              placeholder={selectedPayType === "regular" || shift ? "Explain why this time needs to be changed." : "Optional note for Rachel or your supervisor."}
             />
           </label>
         </div>
@@ -1151,9 +1192,10 @@ function SubmitModal({
       >
         <p className="eyebrow">FINAL REVIEW</p>
         <h3>Submit this timecard?</h3>
+        <PaySummary shifts={shifts} />
         <div className="review-summary">
           <Metric
-            label="Dates worked"
+            label="Dates recorded"
             value={String(
               new Set(shifts.map((s) => dateFmt(s.started_at))).size,
             )}
@@ -1167,7 +1209,7 @@ function SubmitModal({
         {shifts.some((s) => s.anticipated) ? <div className="notice warning"><b>Includes anticipated hours</b><span>{hoursAndMinutes(shifts.filter((s) => s.anticipated).reduce((sum, s) => sum + duration(s), 0))} are scheduled rather than completed work. Report differences promptly to Rachel or your supervisor.</span></div> : null}
         <div className="certification">
           <b>Employee Certification</b>
-          <p>I certify that this timecard accurately records my hours worked and separately identifies hours I anticipate working for the remainder of this month. I have reviewed the recorded time and breaks. I will promptly report any difference between anticipated and actual hours to my supervisor so the timecard can be corrected or amended. By selecting <b>Sign &amp; Submit</b>, I intend to electronically sign this timecard and certify that the information provided is accurate to the best of my knowledge.</p>
+          <p>I certify that this timecard accurately records my hours worked, vacation pay, holiday pay, and sick pay, and separately identifies hours I anticipate working for the remainder of this month. I have reviewed the recorded time and breaks. I will promptly report any difference between anticipated and actual hours to my supervisor so the timecard can be corrected or amended. By selecting <b>Sign &amp; Submit</b>, I intend to electronically sign this timecard and certify that the information provided is accurate to the best of my knowledge.</p>
         </div>
         <label>
           Type your full name as your signature
@@ -1335,7 +1377,7 @@ function Supervisor({ sb, p }: { sb: SB; p: Profile }) {
             </div>
             <div className="certification supervisor-certification">
               <b>Supervisor Approval</b>
-              <p>I have reviewed this employee&apos;s timecard and approve the hours recorded for this pay period. To the best of my knowledge, the timecard accurately reflects the employee&apos;s reported hours worked. By selecting <b>Approve &amp; Sign</b>, I intend to electronically sign and approve this timecard.</p>
+              <p>I have reviewed this employee&apos;s timecard and approve the hours recorded for this pay period. To the best of my knowledge, the timecard accurately reflects the employee&apos;s reported hours worked and paid time off. By selecting <b>Approve &amp; Sign</b>, I intend to electronically sign and approve this timecard.</p>
             </div>
             <div className="modal-actions no-print">
               <button onClick={() => window.print()}>Print / PDF</button>
@@ -1401,7 +1443,8 @@ function Admin({ sb, p }: { sb: SB; p: Profile }) {
       [
         "Employee",
         "Pay period",
-        "Total hours",
+        "Total paid hours",
+        ...PAY_TYPES.map((type) => PAY_LABELS[type]),
         "Anticipated hours",
         "Status",
         "Submitted",
@@ -1411,6 +1454,7 @@ function Admin({ sb, p }: { sb: SB; p: Profile }) {
         c.profiles?.display_name || "",
         c.month,
         (totals.get(c.id) || 0) / 60,
+        ...PAY_TYPES.map((type) => shifts.filter((entry) => entry.timecard_id === c.id && payType(entry) === type).reduce((sum, entry) => sum + duration(entry), 0) / 60),
         shifts.filter((s) => s.timecard_id === c.id && s.anticipated).reduce((sum, s) => sum + duration(s), 0) / 60,
         statusText(c.status),
         c.submitted_at || "",
